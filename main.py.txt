@@ -1,0 +1,126 @@
+import telebot
+import pandas as pd
+import sqlite3
+from handlers import setup_handlers
+from utils import log_error
+from dotenv import load_dotenv
+import os
+from datetime import datetime
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = telebot.TeleBot(BOT_TOKEN)
+
+conn = None
+cursor = None
+
+
+def init_db():
+    """Инициализация базы данных и таблиц, если их нет."""
+    global conn, cursor
+    conn = sqlite3.connect('trips.db', check_same_thread=False)
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS trips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_number INTEGER UNIQUE,
+            user TEXT,
+            user_chat_id INTEGER,
+            trip_from TEXT,
+            trip_to TEXT,
+            departure_place TEXT,
+            departure_time TEXT,
+            price INTEGER,
+            seats INTEGER,
+            status TEXT DEFAULT 'active'
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS bookings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_number INTEGER,
+            user_id INTEGER,
+            user_name TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            seats_booked INTEGER
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER UNIQUE,
+            user_role TEXT,
+            phone_number TEXT
+        )
+    ''')
+
+    conn.commit()
+
+
+def load_data_from_db():
+    """Загружает данные из базы данных."""
+    global conn, cursor
+    try:
+        trips_data = pd.read_sql_query("SELECT * FROM trips", conn)
+        bookings_data = pd.read_sql_query("SELECT * FROM bookings", conn)
+        users_data = pd.read_sql_query("SELECT * FROM users", conn)
+        return trips_data, bookings_data, users_data
+    except sqlite3.Error as e:
+        log_error(f"Ошибка базы данных при загрузке данных: {e}")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+
+def save_data_to_db(data, bookings_data, users_data):
+    """Сохраняет данные в базу данных."""
+    global conn, cursor
+    try:
+      # Сохранение trips
+        cursor.execute("DELETE FROM trips")
+        for index, row in data.iterrows():
+            cursor.execute('''
+                INSERT INTO trips (trip_number, user, user_chat_id, trip_from, trip_to, departure_place, departure_time, price, seats, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (row['trip_number'], row['user'], row['user_chat_id'], row['trip_from'], row['trip_to'], row['departure_place'], row['departure_time'], row['price'], row['seats'], row['status']))
+
+        # Сохранение bookings
+        cursor.execute("DELETE FROM bookings")
+        for index, row in bookings_data.iterrows():
+            cursor.execute('''
+                INSERT INTO bookings (trip_number, user_id, user_name, first_name, last_name, seats_booked)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (row['trip_number'], row['user_id'], row['user_name'], row['first_name'], row['last_name'], row['seats_booked']))
+
+        # Сохранение users
+        cursor.execute("DELETE FROM users")
+        for index, row in users_data.iterrows():
+            cursor.execute('''
+                INSERT INTO users (chat_id, user_role, phone_number)
+                VALUES (?, ?, ?)
+            ''', (row['chat_id'], row['user_role'], row['phone_number']))
+        conn.commit()
+    except sqlite3.Error as e:
+        log_error(f"Ошибка базы данных при сохранении данных: {e}")
+
+
+def get_next_trip_number(data):
+    """Получает следующий доступный номер поездки."""
+    if data.empty:
+        return 1
+    else:
+        max_trip_number = data['trip_number'].max()
+        if max_trip_number >= 999:
+            return 1
+        else:
+            return max_trip_number + 1
+
+
+if __name__ == '__main__':
+    init_db()
+    setup_handlers(bot, load_data_from_db,
+                   save_data_to_db, get_next_trip_number)
+    bot.polling(none_stop=True)

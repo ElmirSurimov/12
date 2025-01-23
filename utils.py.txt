@@ -1,0 +1,71 @@
+from telebot import types
+import logging
+from datetime import datetime
+
+
+def log_error(message, chat_id=None, command=None, additional_data=None):
+    """Логирует ошибки в файл."""
+    logging.basicConfig(filename='bot_errors.log', level=logging.ERROR,
+                        format='%(asctime)s - %(levelname)s - %(message)s')
+    if additional_data:
+        message = f"{message} Дополнительно: {additional_data}"
+    if chat_id and command:
+        message = f"{message} Chat ID: {chat_id}, Command: {command}"
+    elif chat_id:
+        message = f"{message} Chat ID: {chat_id}"
+    elif command:
+        message = f"{message} Command: {command}"
+    logging.error(message)
+
+
+def generate_unique_trip_number():
+    """Генерирует уникальный номер поездки."""
+    now = datetime.now()
+    timestamp = now.strftime("%Y%m%d%H%M%S")
+    return int(timestamp)
+
+
+def create_main_menu_keyboard(user_role):
+    """Создает клавиатуру главного меню."""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    if user_role == "driver":
+        keyboard.add(types.KeyboardButton("Меню водителя"))
+    elif user_role == "passenger":
+        keyboard.add(types.KeyboardButton("Меню пассажира"))
+    keyboard.add(types.KeyboardButton("Сменить роль"))
+    log_error(f"create_main_menu_keyboard: {
+              keyboard.keyboard}", additional_data="DEBUG")
+    return keyboard
+
+
+def create_driver_menu_keyboard():
+    """Создает клавиатуру меню водителя."""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add(
+        types.KeyboardButton("Добавить поездку"),
+        types.KeyboardButton("Отменить поездку"),
+        types.KeyboardButton("Связаться с пассажиром"),
+        types.KeyboardButton("Завершить поездку"),
+        types.KeyboardButton("Мои поездки"),
+        types.KeyboardButton("Назад")
+    )
+    log_error(f"create_driver_menu_keyboard: {
+              keyboard.keyboard}", additional_data="DEBUG")
+    return keyboard
+
+
+def create_passenger_menu_keyboard():
+    """Создает клавиатуру меню пассажира."""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add(
+        types.KeyboardButton("Посмотреть список поездок"),
+        types.KeyboardButton("Поиск поездок"),
+        types.KeyboardButton("Забронировать место"),
+        types.KeyboardButton("Отменить бронирование"),
+        types.KeyboardButton("Связаться с водителем"),
+        types.KeyboardButton("Мои бронирования"),
+        types.KeyboardButton("Назад")
+    )
+    log_error(f"create_passenger_menu_keyboard: {
+              keyboard.keyboard}", additional_data="DEBUG")
+    return keyboard

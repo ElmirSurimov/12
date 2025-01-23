@@ -1,0 +1,650 @@
+import logging
+import pandas as pd
+from telebot import types
+from datetime import datetime
+from utils import log_error, create_main_menu_keyboard, create_driver_menu_keyboard, create_passenger_menu_keyboard
+
+
+def setup_handlers(bot, load_data_from_db, save_data_to_db, get_next_trip_number):
+    """Настраивает все обработчики сообщений."""
+
+    @bot.message_handler(commands=['start'])
+    def start_handler(message):
+        try:
+            chat_id = message.chat.id
+            data, bookings_data, users_data = load_data_from_db()
+            user = users_data[users_data['chat_id'] == chat_id]
+            if not user.empty:
+                user_role = user['user_role'].iloc[0]
+                keyboard = create_main_menu_keyboard(user_role)
+                bot.send_message(
+                    chat_id, "Вы уже зарегистрированы. Выберите действие:", reply_markup=keyboard)
+                return
+
+            keyboard = types.ReplyKeyboardMarkup(
+                resize_keyboard=True, one_time_keyboard=True)
+            keyboard.add(types.KeyboardButton("Я водитель"),
+                         types.KeyboardButton("Я пассажир"))
+            bot.send_message(
+                chat_id, "Здравствуйте! Выберите, пожалуйста, вашу роль:", reply_markup=keyboard)
+        except Exception as e:
+            log_error(
+                f"Ошибка в обработчике '/start': {e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text in ["Я водитель", "Я пассажир"])
+    def handle_role_choice(message):
+        try:
+            chat_id = message.chat.id
+            user_role = "driver" if message.text == "Я водитель" else "passenger"
+            data, bookings_data, users_data = load_data_from_db()
+            new_user = pd.DataFrame(
+                [{'chat_id': chat_id, 'user_role': user_role}])
+            users_data = pd.concat([users_data, new_user], ignore_index=True)
+            save_data_to_db(data, bookings_data, users_data)
+
+            keyboard = create_main_menu_keyboard(user_role)
+            bot.send_message(chat_id, "Вы выбрали роль " + user_role +
+                             ". Теперь выберите действие:", reply_markup=keyboard)
+        except Exception as e:
+            log_error(f"Ошибка при выборе роли: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Сменить роль")
+    def change_role_handler(message):
+        try:
+            chat_id = message.chat.id
+            keyboard = types.ReplyKeyboardMarkup(
+                resize_keyboard=True, one_time_keyboard=True)
+            keyboard.add(types.KeyboardButton("Я водитель"),
+                         types.KeyboardButton("Я пассажир"))
+            bot.send_message(chat_id, "Выберите новую роль:",
+                             reply_markup=keyboard)
+        except Exception as e:
+            log_error(f"Ошибка при смене роли: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Меню водителя")
+    def driver_menu_handler(message):
+        try:
+            chat_id = message.chat.id
+            keyboard = create_driver_menu_keyboard()
+            bot.send_message(
+                chat_id, "Вы перешли в меню водителя. Выберите действие:", reply_markup=keyboard)
+        except Exception as e:
+            log_error(f"Ошибка при переходе в меню водителя: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Меню пассажира")
+    def passenger_menu_handler(message):
+        try:
+            chat_id = message.chat.id
+            keyboard = create_passenger_menu_keyboard()
+            bot.send_message(
+                chat_id, "Вы перешли в меню пассажира. Выберите действие:", reply_markup=keyboard)
+        except Exception as e:
+            log_error(f"Ошибка при переходе в меню пассажира: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    # ===================== Меню водителя =====================
+    @bot.message_handler(func=lambda message: message.text == "Добавить поездку")
+    def add_trip_handler(message):
+        try:
+            chat_id = message.chat.id
+            bot.send_message(chat_id, "Введите место отправления:")
+            bot.register_next_step_handler(message, add_trip_from_handler)
+        except Exception as e:
+            log_error(f"Ошибка при добавлении поездки: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def add_trip_from_handler(message):
+        try:
+            trip_from = message.text
+            chat_id = message.chat.id
+            bot.send_message(chat_id, "Введите место назначения:")
+            bot.register_next_step_handler(
+                message, add_trip_to_handler, trip_from=trip_from)
+        except Exception as e:
+            log_error(f"Ошибка при вводе места отправления: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def add_trip_to_handler(message, trip_from):
+        try:
+            trip_to = message.text
+            chat_id = message.chat.id
+            bot.send_message(chat_id, "Введите место отправления:")
+            bot.register_next_step_handler(
+                message, add_departure_place_handler, trip_from=trip_from, trip_to=trip_to)
+        except Exception as e:
+            log_error(f"Ошибка при вводе места назначения: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def add_departure_place_handler(message, trip_from, trip_to):
+        try:
+            departure_place = message.text
+            chat_id = message.chat.id
+            bot.send_message(
+                chat_id, "Введите время отправления в формате ЧЧ:ММ (например, 10:30):")
+            bot.register_next_step_handler(message, add_departure_time_handler,
+                                           trip_from=trip_from, trip_to=trip_to, departure_place=departure_place)
+        except Exception as e:
+            log_error(f"Ошибка при вводе места отправления: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def add_departure_time_handler(message, trip_from, trip_to, departure_place):
+        try:
+            departure_time = message.text
+            chat_id = message.chat.id
+            bot.send_message(chat_id, "Введите цену за поездку:")
+            bot.register_next_step_handler(message, add_trip_price_handler, trip_from=trip_from,
+                                           trip_to=trip_to, departure_place=departure_place, departure_time=departure_time)
+        except Exception as e:
+            log_error(f"Ошибка при вводе времени отправления: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def add_trip_price_handler(message, trip_from, trip_to, departure_place, departure_time):
+        try:
+            price = int(message.text)
+            chat_id = message.chat.id
+            bot.send_message(chat_id, "Введите количество мест:")
+            bot.register_next_step_handler(message, add_trip_seats_handler, trip_from=trip_from, trip_to=trip_to,
+                                           departure_place=departure_place, departure_time=departure_time, price=price)
+        except ValueError:
+            bot.send_message(
+                message.chat.id, "Некорректный формат цены. Пожалуйста, введите число.")
+            log_error(f"Некорректный ввод цены: {
+                      message.text}", chat_id=message.chat.id, command=message.text)
+        except Exception as e:
+            log_error(f"Ошибка при вводе цены: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def add_trip_seats_handler(message, trip_from, trip_to, departure_place, departure_time, price):
+        try:
+            seats = int(message.text)
+            chat_id = message.chat.id
+            user_name = message.from_user.username if message.from_user.username else f"{
+                message.from_user.first_name} {message.from_user.last_name}"
+
+            data, bookings_data, users_data = load_data_from_db()
+            trip_number = get_next_trip_number(data)
+
+            now = datetime.now()
+            date_str = now.strftime("%d.%m.%Y")
+            departure_time_with_date = f"{date_str} {departure_time}"
+
+            new_trip = pd.DataFrame([{
+                'trip_number': trip_number,
+                'user': user_name,
+                'user_chat_id': chat_id,
+                'trip_from': trip_from,
+                'trip_to': trip_to,
+                'departure_place': departure_place,
+                'departure_time': departure_time_with_date,
+                'price': price,
+                'seats': seats,
+                'status': 'active'
+            }])
+
+            data = pd.concat([data, new_trip], ignore_index=True)
+            save_data_to_db(data, bookings_data, users_data)
+            bot.send_message(chat_id, "Поездка добавлена.")
+        except ValueError:
+            bot.send_message(
+                message.chat.id, "Некорректный формат количества мест. Пожалуйста, введите число.")
+            log_error(f"Некорректный ввод количества мест: {
+                      message.text}", chat_id=message.chat.id, command=message.text)
+        except Exception as e:
+            log_error(f"Ошибка при вводе количества мест: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Отменить поездку")
+    def cancel_trip_handler(message):
+        try:
+            chat_id = message.chat.id
+            bot.send_message(
+                chat_id, "Введите номер поездки, которую хотите отменить:")
+            bot.register_next_step_handler(message, process_cancel_trip)
+        except Exception as e:
+            log_error(f"Ошибка при выборе отмены поездки: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def process_cancel_trip(message):
+        try:
+            trip_number = int(message.text)
+            chat_id = message.chat.id
+            data, bookings_data, users_data = load_data_from_db()
+            trip = data[data['trip_number'] == trip_number]
+            if trip.empty or trip['user_chat_id'].iloc[0] != chat_id:
+                bot.send_message(
+                    chat_id, "Поездка не найдена или вы не являетесь ее владельцем.")
+                return
+
+            data.loc[data['trip_number'] ==
+                     trip_number, 'status'] = 'cancelled'
+            save_data_to_db(data, bookings_data, users_data)
+            bot.send_message(chat_id, f"Поездка №{trip_number} отменена.")
+        except ValueError:
+            bot.send_message(
+                message.chat.id, "Некорректный формат номера поездки. Пожалуйста, введите число.")
+            log_error(f"Некорректный ввод номера поездки: {
+                      message.text}", chat_id=message.chat.id, command=message.text)
+        except Exception as e:
+            log_error(f"Ошибка при отмене поездки: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Связаться с пассажиром")
+    def contact_passenger_handler(message):
+        try:
+            chat_id = message.chat.id
+            data, bookings_data, users_data = load_data_from_db()
+            user_trips = data[data['user_chat_id'] == chat_id]
+
+            if user_trips.empty:
+                bot.send_message(chat_id, "У вас нет добавленных поездок.")
+                return
+
+            trip_numbers = user_trips['trip_number'].tolist()
+            passengers_info = bookings_data[bookings_data['trip_number'].isin(
+                trip_numbers)]
+
+            if passengers_info.empty:
+                bot.send_message(chat_id, "На эту поездку нет пассажиров.")
+                return
+
+            message_text = "Список пассажиров:\n"
+            for index, row in passengers_info.iterrows():
+                message_text += f"- Пассажир: {row['user_name']
+                                               }, ID пассажира: {row['user_id']}\n"
+            bot.send_message(chat_id, message_text)
+        except Exception as e:
+            log_error(f"Ошибка при получении списка пассажиров: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Завершить поездку")
+    def complete_trip_handler(message):
+        try:
+            chat_id = message.chat.id
+            bot.send_message(
+                chat_id, "Введите номер поездки, которую хотите завершить:")
+            bot.register_next_step_handler(message, process_complete_trip)
+        except Exception as e:
+            log_error(f"Ошибка при выборе завершения поездки: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def process_complete_trip(message):
+        try:
+            trip_number = int(message.text)
+            chat_id = message.chat.id
+            data, bookings_data, users_data = load_data_from_db()
+            trip = data[data['trip_number'] == trip_number]
+            if trip.empty or trip['user_chat_id'].iloc[0] != chat_id:
+                bot.send_message(
+                    chat_id, "Поездка не найдена или вы не являетесь ее владельцем.")
+                return
+
+            data.loc[data['trip_number'] ==
+                     trip_number, 'status'] = 'completed'
+            save_data_to_db(data, bookings_data, users_data)
+            bot.send_message(chat_id, f"Поездка №{trip_number} завершена.")
+        except ValueError:
+            bot.send_message(
+                message.chat.id, "Некорректный формат номера поездки. Пожалуйста, введите число.")
+            log_error(f"Некорректный ввод номера поездки: {
+                      message.text}", chat_id=message.chat.id, command=message.text)
+        except Exception as e:
+            log_error(f"Ошибка при завершении поездки: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Мои поездки")
+    def my_trips_handler(message):
+        try:
+            chat_id = message.chat.id
+            data, bookings_data, users_data = load_data_from_db()
+            user_trips = data[data['user_chat_id'] == chat_id]
+
+            active_trips = user_trips[user_trips['status'] == 'active']
+
+            if active_trips.empty:
+                bot.send_message(chat_id, "У вас нет активных поездок.")
+
+                completed_trips = user_trips[user_trips['status']
+                                             == 'completed']
+                if not completed_trips.empty:
+                    data = data.drop(completed_trips.index)
+                    save_data_to_db(data, bookings_data, users_data)
+                return
+
+            message_text = "Ваши активные поездки:\n"
+            for index, row in active_trips.iterrows():
+                message_text += f"№{row['trip_number']}: {row['trip_from']} - {
+                    row['trip_to']}, время: {row['departure_time']}, мест: {row['seats']}\n"
+            bot.send_message(chat_id, message_text)
+
+            completed_trips = user_trips[user_trips['status'] == 'completed']
+            if not completed_trips.empty:
+                data = data.drop(completed_trips.index)
+                save_data_to_db(data, bookings_data, users_data)
+
+        except Exception as e:
+            log_error(f"Ошибка при выводе списка поездок: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+ # ===================== Меню пассажира =====================
+
+    @bot.message_handler(func=lambda message: message.text == "Посмотреть список поездок")
+    def view_trips_handler(message):
+        try:
+            chat_id = message.chat.id
+            data, bookings_data, users_data = load_data_from_db()
+            active_trips = data[data['status'] == 'active']
+            if active_trips.empty:
+                bot.send_message(chat_id, "Нет доступных поездок.")
+                return
+
+            message_text = "Список доступных поездок:\n"
+            for index, row in active_trips.iterrows():
+                message_text += f"№{row['trip_number']}: {row['trip_from']} - {row['trip_to']}, время: {
+                    row['departure_time']}, цена: {row['price']}, мест: {row['seats']}\n"
+            bot.send_message(chat_id, message_text)
+        except Exception as e:
+            log_error(f"Ошибка при просмотре списка поездок: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Поиск поездок")
+    def search_trips_handler(message):
+        try:
+            chat_id = message.chat.id
+            bot.send_message(chat_id, "Введите место отправления для поиска:")
+            bot.register_next_step_handler(message, process_search_from)
+        except Exception as e:
+            log_error(f"Ошибка при поиске поездок: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def process_search_from(message):
+        try:
+            trip_from = message.text
+            chat_id = message.chat.id
+            bot.send_message(chat_id, "Введите место назначения для поиска:")
+            bot.register_next_step_handler(
+                message, process_search_to, trip_from=trip_from)
+        except Exception as e:
+            log_error(f"Ошибка при вводе места отправления для поиска: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def process_search_to(message, trip_from):
+        try:
+            trip_to = message.text
+            chat_id = message.chat.id
+            data, bookings_data, users_data = load_data_from_db()
+            found_trips = data[(data['trip_from'] == trip_from) & (
+                data['trip_to'] == trip_to) & (data['status'] == 'active')]
+            if found_trips.empty:
+                bot.send_message(chat_id, "Поездки не найдены.")
+                return
+
+            message_text = "Найденные поездки:\n"
+            for index, row in found_trips.iterrows():
+                message_text += f"№{row['trip_number']}: {row['trip_from']} - {row['trip_to']}, время: {
+                    row['departure_time']}, цена: {row['price']}, мест: {row['seats']}\n"
+            bot.send_message(chat_id, message_text)
+        except Exception as e:
+            log_error(f"Ошибка при вводе места назначения для поиска: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Забронировать место")
+    def book_trip_handler(message):
+        try:
+            chat_id = message.chat.id
+            bot.send_message(
+                chat_id, "Введите номер поездки для бронирования:")
+            bot.register_next_step_handler(message, process_booking)
+        except Exception as e:
+            log_error(f"Ошибка при выборе бронирования: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def process_booking(message):
+        try:
+            trip_number = int(message.text)
+            chat_id = message.chat.id
+            user_name = message.from_user.username if message.from_user.username else f"{
+                message.from_user.first_name} {message.from_user.last_name}"
+            first_name = message.from_user.first_name
+            last_name = message.from_user.last_name
+            data, bookings_data, users_data = load_data_from_db()
+            trip = data[data['trip_number'] == trip_number]
+            if trip.empty or trip['status'].iloc[0] != 'active':
+                bot.send_message(chat_id, "Поездка не найдена или неактивна.")
+                return
+
+            bot.send_message(
+                chat_id, "Введите количество мест для бронирования:")
+            bot.register_next_step_handler(message, process_seats_booking, trip_number=trip_number,
+                                           user_name=user_name, first_name=first_name, last_name=last_name)
+        except ValueError:
+            bot.send_message(
+                message.chat.id, "Некорректный формат номера поездки. Пожалуйста, введите число.")
+            log_error(f"Некорректный ввод номера поездки при бронировании: {
+                      message.text}", chat_id=message.chat.id, command=message.text)
+        except Exception as e:
+            log_error(f"Ошибка при вводе номера поездки для бронирования: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def process_seats_booking(message, trip_number, user_name, first_name, last_name):
+        try:
+            seats_booked = int(message.text)
+            chat_id = message.chat.id
+            data, bookings_data, users_data = load_data_from_db()
+            trip = data[data['trip_number'] == trip_number]
+            if trip.empty or trip['status'].iloc[0] != 'active':
+                bot.send_message(chat_id, "Поездка не найдена или неактивна.")
+                return
+
+            available_seats = trip['seats'].iloc[0]
+            if available_seats < seats_booked:
+                bot.send_message(chat_id, f"Недостаточно мест. Доступно только: {
+                                 available_seats}")
+                return
+
+            new_booking = pd.DataFrame([{
+                'trip_number': trip_number,
+                'user_id': chat_id,
+                'user_name': user_name,
+                'first_name': first_name,
+                'last_name': last_name,
+                'seats_booked': seats_booked
+            }])
+
+            bookings_data = pd.concat(
+                [bookings_data, new_booking], ignore_index=True)
+            data.loc[data['trip_number'] ==
+                     trip_number, 'seats'] -= seats_booked
+            save_data_to_db(data, bookings_data, users_data)
+            bot.send_message(chat_id, "Бронирование успешно завершено!")
+        except ValueError:
+            bot.send_message(
+                message.chat.id, "Некорректный формат количества мест. Пожалуйста, введите число.")
+            log_error(f"Некорректный ввод количества мест при бронировании: {
+                      message.text}", chat_id=message.chat.id, command=message.text)
+        except Exception as e:
+            log_error(f"Ошибка при вводе количества мест для бронирования: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Отменить бронирование")
+    def cancel_booking_handler(message):
+        try:
+            chat_id = message.chat.id
+            bot.send_message(
+                chat_id, "Введите номер поездки, бронирование которой хотите отменить:")
+            bot.register_next_step_handler(message, process_cancel_booking)
+        except Exception as e:
+            log_error(f"Ошибка при выборе отмены бронирования: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def process_cancel_booking(message):
+        try:
+            trip_number = int(message.text)
+            chat_id = message.chat.id
+            data, bookings_data, users_data = load_data_from_db()
+            booking = bookings_data[(bookings_data['trip_number'] == trip_number) & (
+                bookings_data['user_id'] == chat_id)]
+
+            if booking.empty:
+                bot.send_message(chat_id, "Бронирование не найдено.")
+                return
+
+            seats_booked = booking['seats_booked'].iloc[0]
+
+            data.loc[data['trip_number'] ==
+                     trip_number, 'seats'] += seats_booked
+            bookings_data = bookings_data.drop(booking.index)
+            save_data_to_db(data, bookings_data, users_data)
+            bot.send_message(chat_id, f"Бронирование на поездку №{
+                             trip_number} отменено.")
+        except ValueError:
+            bot.send_message(
+                message.chat.id, "Некорректный формат номера поездки. Пожалуйста, введите число.")
+            log_error(f"Некорректный ввод номера поездки при отмене бронирования: {
+                      message.text}", chat_id=message.chat.id, command=message.text)
+        except Exception as e:
+            log_error(f"Ошибка при отмене бронирования: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Связаться с водителем")
+    def contact_driver_handler(message):
+        try:
+            chat_id = message.chat.id
+            bot.send_message(
+                chat_id, "Введите номер поездки, чтобы узнать контакты водителя:")
+            bot.register_next_step_handler(message, process_contact_driver)
+        except Exception as e:
+            log_error(f"Ошибка при получении контактов водителя: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    def process_contact_driver(message):
+        try:
+            trip_number = int(message.text)
+            chat_id = message.chat.id
+            data, bookings_data, users_data = load_data_from_db()
+            trip = data[data['trip_number'] == trip_number]
+            if trip.empty:
+                bot.send_message(chat_id, "Поездка не найдена.")
+                return
+
+            driver_id = trip['user_chat_id'].iloc[0]
+            driver_user = users_data[users_data['chat_id'] == driver_id]
+
+            if driver_user.empty:
+                bot.send_message(chat_id, "Информация о водителе не найдена.")
+                return
+
+            phone_number = driver_user['phone_number'].iloc[0] if driver_user['phone_number'].notna(
+            ).any() else 'Номер телефона не указан.'
+            driver_name = trip['user'].iloc[0]
+
+            bot.send_message(chat_id, f"Имя водителя: {
+                             driver_name}, Номер телефона: {phone_number}")
+        except ValueError:
+            bot.send_message(
+                message.chat.id, "Некорректный формат номера поездки. Пожалуйста, введите число.")
+            log_error(f"Некорректный ввод номера поездки для связи с водителем: {
+                      message.text}", chat_id=message.chat.id, command=message.text)
+        except Exception as e:
+            log_error(f"Ошибка при получении контактов водителя: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Мои бронирования")
+    def my_bookings_handler(message):
+        try:
+            chat_id = message.chat.id
+            data, bookings_data, users_data = load_data_from_db()
+            user_bookings = bookings_data[bookings_data['user_id'] == chat_id]
+            if user_bookings.empty:
+                bot.send_message(chat_id, "У вас нет бронирований.")
+                return
+
+            message_text = "Ваши бронирования:\n"
+            for index, row in user_bookings.iterrows():
+                trip_data = data[data['trip_number'] == row['trip_number']]
+                if not trip_data.empty:
+                    message_text += f"№{row['trip_number']}: {trip_data['trip_from'].iloc[0]} - {
+                        trip_data['trip_to'].iloc[0]}, мест: {row['seats_booked']}\n"
+            bot.send_message(chat_id, message_text)
+        except Exception as e:
+            log_error(f"Ошибка при выводе списка бронирований: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
+
+    @bot.message_handler(func=lambda message: message.text == "Назад")
+    def back_handler(message):
+        try:
+            chat_id = message.chat.id
+            data, bookings_data, users_data = load_data_from_db()
+            user = users_data[users_data['chat_id'] == chat_id]
+            if not user.empty:
+                user_role = user['user_role'].iloc[0]
+                keyboard = create_main_menu_keyboard(user_role)
+                bot.send_message(
+                    chat_id, "Вы вернулись в главное меню.", reply_markup=keyboard)
+        except Exception as e:
+            log_error(f"Ошибка при возврате в главное меню: {
+                      e}", chat_id=message.chat.id, command=message.text)
+            bot.send_message(
+                message.chat.id, "Произошла ошибка, пожалуйста, попробуйте позже.")
